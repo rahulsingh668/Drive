@@ -1,0 +1,14 @@
+build/
+.signing/
+__pycache__/
+*.py[cod]
+*.apk
+*.apks
+*.aab
+*.jks
+*.keystore
+*.idsig
+local.properties
+.gradle/
+.idea/
+.DS_Store
