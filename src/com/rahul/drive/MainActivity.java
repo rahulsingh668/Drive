@@ -2,10 +2,14 @@ package com.rahul.drive;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.app.role.RoleManager;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
@@ -32,29 +36,32 @@ import android.provider.Settings;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.ContextThemeWrapper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.AbsListView;
+import android.widget.BaseAdapter;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.GridView;
+import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
 /** Native, offline home activity. No polling for phones, overlays, or foreground service. */
 public final class MainActivity extends Activity {
-    private static final int INK = Color.rgb(238,241,243);
-    private static final int MUTED = Color.rgb(169,177,181);
-    private static final int ACCENT = Color.rgb(239,173,99);
-    private static final int LINE = Color.rgb(52,58,62);
+    private int INK, MUTED, ACCENT, LINE;
     private static final String[] SLOTS = {"Navigation", "Music", "Radio", "Phone", "Android Auto"};
     private final Handler handler = new Handler(Looper.getMainLooper());
     private SharedPreferences prefs;
@@ -69,6 +76,15 @@ public final class MainActivity extends Activity {
     private MediaController controller;
     private CarLetterMedia carLetterMedia;
     private boolean visible, night;
+    private String themeMode;
+    private Dialog appsDialog;
+    private GridView appsGrid;
+    private String appPickerSlot;
+    private final BroadcastReceiver timeChanges = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            refreshTheme(); updateClock();
+        }
+    };
     private final MediaController.Callback mediaCallback = new MediaController.Callback() {
         @Override public void onMetadataChanged(MediaMetadata data) { updateMedia(); }
         @Override public void onPlaybackStateChanged(PlaybackState state) { updateMedia(); }
@@ -78,7 +94,7 @@ public final class MainActivity extends Activity {
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (!visible) return;
-            updateClock(); updatePosition(); updateVolume();
+            refreshTheme(); updateClock(); updatePosition(); updateVolume();
             handler.postDelayed(this, controller != null && isPlaying() ? 1000 : 15000);
         }
     };
@@ -92,7 +108,9 @@ public final class MainActivity extends Activity {
         suggestApp("Radio", "com.imotor.fmam/.view.MainActivity");
         suggestApp("Phone", "com.imotor.contacts/.ui.MainActivity");
         suggestApp("Android Auto", "com.imotor.phoneconnect/.AndroidAuto");
-        night = prefs.getBoolean("night", true);
+        // First update defaults to automatic instead of inheriting the old binary toggle.
+        themeMode = ThemePolicy.normalize(prefs.getString("theme_mode", ThemePolicy.AUTO));
+        night = ThemePolicy.isNight(themeMode, Calendar.getInstance());
         audio = (AudioManager) getSystemService(AUDIO_SERVICE);
         sessions = (MediaSessionManager) getSystemService(MEDIA_SESSION_SERVICE);
         carLetterMedia = new CarLetterMedia(() -> { if (visible) updateMedia(); });
@@ -105,6 +123,12 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume(); visible = true;
+        refreshTheme();
+        IntentFilter times = new IntentFilter();
+        times.addAction(Intent.ACTION_TIME_TICK); times.addAction(Intent.ACTION_TIME_CHANGED);
+        times.addAction(Intent.ACTION_TIMEZONE_CHANGED); times.addAction(Intent.ACTION_DATE_CHANGED);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(timeChanges, times, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(timeChanges, times);
         // Only decorate our own window. Never launch ourselves in response to a phone connection.
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
             | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
@@ -115,23 +139,69 @@ public final class MainActivity extends Activity {
 
     @Override protected void onPause() {
         visible = false; handler.removeCallbacks(tick);
+        unregisterReceiver(timeChanges);
         MediaAccess.onConnectionChanged = null;
         sessions.removeOnActiveSessionsChangedListener(sessionListener);
         detachMedia();
         super.onPause();
     }
 
-    @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); }
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent); setIntent(intent);
+        if (intent.hasCategory(Intent.CATEGORY_HOME)) closeApps();
+    }
     @Override protected void onDestroy() {
         if (carLetterMedia != null) unregisterReceiver(carLetterMedia);
+        closeApps();
         super.onDestroy();
     }
     @Override public void onBackPressed() { /* Home stays home. Dialogs handle their own Back. */ }
 
-    private int panelColor() { return Color.parseColor(night ? "#1c2023" : "#363e45"); }
-    private int backgroundColor() { return Color.parseColor(night ? "#111416" : "#252b30"); }
+    private int panelColor() { return Color.parseColor(night ? "#1c2023" : "#f2f4f6"); }
+    private int backgroundColor() { return night ? Color.rgb(17,20,22) : Color.WHITE; }
+    private int rippleColor() { return night ? 0x30ffffff : 0x18000000; }
+    private Context dialogContext() {
+        return new ContextThemeWrapper(this, night ? android.R.style.Theme_Material_Dialog_Alert : android.R.style.Theme_Material_Light_Dialog_Alert);
+    }
+
+    private void refreshTheme() {
+        boolean next = ThemePolicy.isNight(themeMode, Calendar.getInstance());
+        if (night != next) { night = next; rebuildAppearance(); }
+    }
+
+    private void setThemeMode(String mode) {
+        themeMode = ThemePolicy.normalize(mode);
+        prefs.edit().putString("theme_mode", themeMode).apply();
+        night = ThemePolicy.isNight(themeMode, Calendar.getInstance());
+        rebuildAppearance();
+    }
+
+    private void rebuildAppearance() {
+        boolean reopen = appsDialog != null && appsDialog.isShowing();
+        String slot = appPickerSlot;
+        int position = appsGrid == null ? 0 : appsGrid.getFirstVisiblePosition();
+        closeApps(); buildHome();
+        if (reopen) { showApps(slot); if (appsGrid != null) appsGrid.setSelection(position); }
+    }
+
+    private String appearanceLabel() {
+        return ThemePolicy.AUTO.equals(themeMode) ? "Auto: " + (night ? "Night" : "Day") : (night ? "Night" : "Day");
+    }
+
+    private void showThemeChooser() {
+        String[] modes = {ThemePolicy.AUTO, ThemePolicy.DAY, ThemePolicy.NIGHT};
+        int selected = ThemePolicy.DAY.equals(themeMode) ? 1 : ThemePolicy.NIGHT.equals(themeMode) ? 2 : 0;
+        new AlertDialog.Builder(dialogContext()).setTitle("Appearance")
+            .setSingleChoiceItems(new String[]{"Automatic · Day 08:00–18:00", "Day · Always light", "Night · Always dark"}, selected,
+                (dialog, index) -> { dialog.dismiss(); setThemeMode(modes[index]); })
+            .setNegativeButton("Cancel", null).show();
+    }
 
     private void buildHome() {
+        INK = Color.parseColor(night ? "#eef1f3" : "#182026");
+        MUTED = Color.parseColor(night ? "#a9b1b5" : "#52616b");
+        ACCENT = Color.parseColor(night ? "#efad63" : "#985012");
+        LINE = Color.parseColor(night ? "#343a3e" : "#dce2e7");
         surface = new FrameLayout(this);
         surface.setBackgroundColor(backgroundColor());
         ScreenFit fit = new ScreenFit(); fit.addView(surface); setContentView(fit);
@@ -147,7 +217,7 @@ public final class MainActivity extends Activity {
         date = label("", 42, 302, 480, 30, 18, MUTED, false);
         CarArt car = new CarArt(false);
         put(car, 42, 352, 112, 68);
-        label("XUV 300", 170, 354, 280, 30, 21, Color.rgb(198,205,211), true);
+        label("XUV 300", 170, 354, 280, 30, 21, night ? Color.rgb(198,205,211) : Color.rgb(70,86,97), true);
         label("SILVER · YOUR CAR", 170, 388, 300, 24, 13, MUTED, false);
         button("Home", 40, 442, 180, 58, panelColor(), INK, () -> navigateSaved("home"));
         button("Work", 232, 442, 180, 58, panelColor(), INK, () -> navigateSaved("work"));
@@ -192,9 +262,7 @@ public final class MainActivity extends Activity {
         button("−", 692, 670, 64, 48, backgroundColor(), INK, () -> changeVolume(-1)).setContentDescription("Lower media volume");
         volume = label("", 762, 676, 150, 36, 17, MUTED, false); volume.setGravity(Gravity.CENTER);
         button("+", 918, 670, 64, 48, backgroundColor(), INK, () -> changeVolume(1)).setContentDescription("Raise media volume");
-        button(night ? "Night" : "Day", 1070, 670, 170, 48, backgroundColor(), MUTED, () -> {
-            night = !night; prefs.edit().putBoolean("night", night).apply(); buildHome(); updateClock(); updateVolume(); updateMedia();
-        });
+        button(appearanceLabel(), 1050, 670, 190, 48, backgroundColor(), MUTED, this::showThemeChooser);
         updateClock(); updateVolume(); updateMedia();
     }
 
@@ -250,7 +318,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showMediaAccessHelp() {
-        new AlertDialog.Builder(this).setTitle("Music controls")
+        new AlertDialog.Builder(dialogContext()).setTitle("Music controls")
             .setMessage("Enable DRIVE music controls in Android’s notification-access screen. Android grants access to notifications with this permission. DRIVE only uses active media sessions; it does not read or save notification messages.\n\nPhone music through Android Auto appears here only if the stereo’s projection app shares track information with Android. Otherwise, use the music controls inside Android Auto.")
             .setPositiveButton("Open access settings",(a,b)->openSystem(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)))
             .setNegativeButton("Cancel",null).show();
@@ -349,9 +417,13 @@ public final class MainActivity extends Activity {
 
     private List<ResolveInfo> appList() {
         Intent query = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
-        List<ResolveInfo> apps = new ArrayList<>(getPackageManager().queryIntentActivities(query, 0));
-        java.util.Iterator<ResolveInfo> iterator = apps.iterator();
-        while(iterator.hasNext()) if(iterator.next().activityInfo.packageName.equals(getPackageName())) iterator.remove();
+        java.util.LinkedHashMap<String, ResolveInfo> unique = new java.util.LinkedHashMap<>();
+        for (ResolveInfo app : getPackageManager().queryIntentActivities(query, 0)) {
+            android.content.pm.ActivityInfo info = app.activityInfo;
+            if (info.packageName.equals(getPackageName()) || !info.enabled || !info.exported || !info.applicationInfo.enabled) continue;
+            unique.put(new ComponentName(info.packageName, info.name).flattenToString(), app);
+        }
+        List<ResolveInfo> apps = new ArrayList<>(unique.values());
         Collections.sort(apps, (a,b) -> a.loadLabel(getPackageManager()).toString().compareToIgnoreCase(b.loadLabel(getPackageManager()).toString()));
         return apps;
     }
@@ -368,17 +440,101 @@ public final class MainActivity extends Activity {
     }
 
     private void showApps(String bindSlot) {
+        closeApps();
         List<ResolveInfo> apps = appList();
         if(apps.isEmpty()) { toast("No launchable apps found."); return; }
-        String[] labels = new String[apps.size()];
-        for(int i=0;i<apps.size();i++) labels[i] = apps.get(i).loadLabel(getPackageManager()) + "\n" + apps.get(i).activityInfo.packageName;
-        new AlertDialog.Builder(this).setTitle(bindSlot == null ? "Apps" : "Choose app for " + bindSlot)
-            .setItems(labels, (d,which) -> {
-                ResolveInfo r = apps.get(which);
-                ComponentName component = new ComponentName(r.activityInfo.packageName,r.activityInfo.name);
-                if(bindSlot != null) { prefs.edit().putString("app."+bindSlot, component.flattenToString()).apply(); toast(bindSlot + " shortcut saved"); }
-                else launchComponent(component);
-            }).setNegativeButton("Cancel", null).show();
+        Dialog dialog = new Dialog(this, night ? android.R.style.Theme_Material_NoActionBar : android.R.style.Theme_Material_Light_NoActionBar);
+        appsDialog = dialog; appPickerSlot = bindSlot;
+        Context context = dialog.getContext();
+        FrameLayout canvas = new FrameLayout(context); canvas.setBackgroundColor(backgroundColor());
+        TextView heading = drawerLabel(context, bindSlot == null ? "Apps" : "Choose " + bindSlot + " app", 32, INK);
+        addAt(canvas, heading, 40, 30, 970, 52);
+        TextView hint = drawerLabel(context, bindSlot == null ? "Tap to open · Hold for app info" : "Tap an icon to assign this shortcut", 17, MUTED);
+        addAt(canvas, hint, 40, 88, 1010, 30);
+        addAt(canvas, styledButton(context, "Back", panelColor(), INK, this::closeApps), 1090, 34, 150, 64);
+
+        GridView grid = new GridView(context); appsGrid = grid;
+        grid.setNumColumns(6); grid.setColumnWidth(180); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
+        grid.setHorizontalSpacing(20); grid.setVerticalSpacing(18);
+        grid.setPadding(0, 4, 0, 12); grid.setClipToPadding(false);
+        grid.setVerticalScrollBarEnabled(true); grid.setScrollBarStyle(View.SCROLLBARS_OUTSIDE_OVERLAY);
+        grid.setAdapter(new AppGridAdapter(apps));
+        grid.setOnItemClickListener((parent, cell, index, id) -> {
+            ResolveInfo r = apps.get(index);
+            ComponentName component = new ComponentName(r.activityInfo.packageName, r.activityInfo.name);
+            if (bindSlot != null) {
+                prefs.edit().putString("app." + bindSlot, component.flattenToString()).apply();
+                closeApps(); toast(bindSlot + " shortcut saved");
+            } else if (launchComponent(component)) closeApps();
+            else toast("This app is unavailable. Open Apps again to refresh.");
+        });
+        grid.setOnItemLongClickListener((parent, cell, index, id) -> {
+            String packageName = apps.get(index).activityInfo.packageName;
+            closeApps(); openSystem(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + packageName)));
+            return true;
+        });
+        addAt(canvas, grid, 40, 142, 1200, 550);
+        ScreenFit fit = new ScreenFit(); fit.addView(canvas); dialog.setContentView(fit);
+        dialog.setOnDismissListener(ignored -> {
+            if (appsDialog == dialog) { appsDialog = null; appsGrid = null; appPickerSlot = null; }
+        });
+        dialog.show();
+        android.view.Window window = dialog.getWindow();
+        window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(backgroundColor()));
+        window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        grid.requestFocus();
+    }
+
+    private void closeApps() {
+        Dialog current = appsDialog;
+        appsDialog = null; appsGrid = null; appPickerSlot = null;
+        if (current != null) current.dismiss();
+    }
+
+    private TextView drawerLabel(Context context, String value, int size, int color) {
+        TextView label = new TextView(context); label.setText(value); label.setTextColor(color);
+        label.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, size);
+        label.setGravity(Gravity.CENTER_VERTICAL); label.setSingleLine(); label.setEllipsize(TextUtils.TruncateAt.END);
+        return label;
+    }
+
+    private final class AppGridAdapter extends BaseAdapter {
+        private final List<ResolveInfo> apps;
+        AppGridAdapter(List<ResolveInfo> values) { apps = values; }
+        @Override public int getCount() { return apps.size(); }
+        @Override public ResolveInfo getItem(int position) { return apps.get(position); }
+        @Override public long getItemId(int position) { return position; }
+        @Override public View getView(int position, View recycled, ViewGroup parent) {
+            LinearLayout cell;
+            ImageView icon; TextView name;
+            if (recycled == null) {
+                cell = new LinearLayout(parent.getContext()); cell.setOrientation(LinearLayout.VERTICAL);
+                cell.setGravity(Gravity.CENTER); cell.setPadding(10, 8, 10, 8);
+                cell.setLayoutParams(new AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 158));
+                icon = new ImageView(parent.getContext()); icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+                cell.addView(icon, new LinearLayout.LayoutParams(72, 72));
+                name = new TextView(parent.getContext()); name.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 20);
+                name.setGravity(Gravity.CENTER); name.setMaxLines(2); name.setEllipsize(TextUtils.TruncateAt.END);
+                name.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+                LinearLayout.LayoutParams caption = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 56);
+                caption.topMargin = 10; cell.addView(name, caption);
+                cell.setTag(new View[]{icon, name});
+                cell.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+            } else {
+                cell = (LinearLayout) recycled;
+                View[] children = (View[]) cell.getTag(); icon = (ImageView) children[0]; name = (TextView) children[1];
+            }
+            ResolveInfo app = getItem(position);
+            String label = app.loadLabel(getPackageManager()).toString();
+            try { icon.setImageDrawable(app.loadIcon(getPackageManager())); }
+            catch (android.content.res.Resources.NotFoundException exception) { icon.setImageDrawable(getPackageManager().getDefaultActivityIcon()); }
+            name.setText(label); name.setTextColor(INK); cell.setContentDescription(label);
+            cell.setBackground(new RippleDrawable(android.content.res.ColorStateList.valueOf(rippleColor()), shape(Color.TRANSPARENT, 16), null));
+            return cell;
+        }
     }
 
     private void launchSlot(String slot) {
@@ -413,9 +569,9 @@ public final class MainActivity extends Activity {
     }
 
     private void editDestination(String key) {
-        EditText field = new EditText(this); field.setSingleLine(); field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_POSTAL_ADDRESS);
+        EditText field = new EditText(dialogContext()); field.setSingleLine(); field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_POSTAL_ADDRESS);
         field.setText(prefs.getString("destination."+key, "")); field.setHint("Address or place name");
-        new AlertDialog.Builder(this).setTitle("Set " + key + " destination").setView(field)
+        new AlertDialog.Builder(dialogContext()).setTitle("Set " + key + " destination").setView(field)
             .setPositiveButton("Save", (d,w) -> { prefs.edit().putString("destination."+key,field.getText().toString().trim()).apply(); })
             .setNegativeButton("Cancel",null).show();
     }
@@ -429,19 +585,21 @@ public final class MainActivity extends Activity {
     }
 
     private void showSettings() {
-        String[] items = new String[12];
+        String[] items = new String[13];
         for(int i=0;i<SLOTS.length;i++) items[i] = SLOTS[i] + "  ·  " + bindingLabel(SLOTS[i]);
         items[5] = "Set Home destination"; items[6] = "Set Work destination";
         items[7] = "Enable music controls"; items[8] = "Set default Home launcher";
-        items[9] = "Startup screen preview"; items[10] = "Android system settings"; items[11] = "About DRIVE / Android Auto";
-        new AlertDialog.Builder(this).setTitle("DRIVE settings").setItems(items,(d,index) -> {
+        items[9] = "Startup screen preview"; items[10] = "Android system settings";
+        items[11] = "Appearance · " + appearanceLabel(); items[12] = "About DRIVE / Android Auto";
+        new AlertDialog.Builder(dialogContext()).setTitle("DRIVE settings").setItems(items,(d,index) -> {
             if(index<5) showApps(SLOTS[index]);
             else if(index==5 || index==6) editDestination(index==5?"home":"work");
             else if(index==7) showMediaAccessHelp();
             else if(index==8) chooseHome();
             else if(index==9) previewStartup();
             else if(index==10) openSystem(new Intent(Settings.ACTION_SETTINGS));
-            else new AlertDialog.Builder(this).setTitle("DRIVE 0.1.1")
+            else if(index==11) showThemeChooser();
+            else new AlertDialog.Builder(dialogContext()).setTitle("DRIVE 0.2.0")
                 .setMessage("DRIVE Launcher · XUV 300\n1280 × 720 native layout · Android 6.0+\n\nAndroid Auto is provided by your stereo’s existing projection app. Keep its connection and auto-start settings enabled. DRIVE yields when another app opens and does not monitor connections or pull itself to the foreground. Select that projection app for the Android Auto shortcut.\n\nSwitching and return behavior must be tested on your stereo. The startup preview does not change the firmware boot logo.")
                 .setPositiveButton("Done",null).show();
         }).setNegativeButton("Done",null).show();
@@ -467,7 +625,7 @@ public final class MainActivity extends Activity {
         TextView text = new TextView(this); text.setText("DRIVE\n\nWelcome."); text.setTextColor(INK);
         text.setTextSize(28); text.setGravity(Gravity.CENTER);
         stage.addView(text,new FrameLayout.LayoutParams(-1,260));
-        new AlertDialog.Builder(this).setTitle("Startup concept · preview only").setView(stage).setPositiveButton("Close",null).show();
+        new AlertDialog.Builder(dialogContext()).setTitle("Startup concept · preview only").setView(stage).setPositiveButton("Close",null).show();
     }
 
     private void toast(String message) { Toast.makeText(this,message,Toast.LENGTH_LONG).show(); }
@@ -481,21 +639,26 @@ public final class MainActivity extends Activity {
     }
 
     private Button button(String title,int x,int y,int w,int h,int fill,int color,Runnable action) {
-        Button b = new Button(this); b.setText(title); b.setTextColor(color); b.setAllCaps(false);
+        Button b = styledButton(this, title, fill, color, action); put(b,x,y,w,h); return b;
+    }
+
+    private Button styledButton(Context context, String title, int fill, int color, Runnable action) {
+        Button b = new Button(context); b.setText(title); b.setTextColor(color); b.setAllCaps(false);
         b.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,20); b.setTypeface(Typeface.create("sans-serif",Typeface.NORMAL));
         b.setMinWidth(0); b.setMinimumWidth(0); b.setMinHeight(0); b.setMinimumHeight(0);
         b.setPadding(8,0,8,0); b.setStateListAnimator(null);
-        b.setBackground(new RippleDrawable(android.content.res.ColorStateList.valueOf(0x30ffffff),shape(fill,16),null));
-        b.setOnClickListener(v -> action.run()); put(b,x,y,w,h); return b;
+        b.setBackground(new RippleDrawable(android.content.res.ColorStateList.valueOf(rippleColor()),shape(fill,16),null));
+        b.setOnClickListener(v -> action.run()); return b;
     }
 
     private GradientDrawable shape(int color,int radius) { GradientDrawable g=new GradientDrawable();g.setColor(color);g.setCornerRadius(radius);return g; }
     private void line(int x,int y,int w) { View v=new View(this);v.setBackgroundColor(LINE);put(v,x,y,w,1); }
-    private void put(View v,int x,int y,int w,int h) { FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(w,h);p.leftMargin=x;p.topMargin=y;surface.addView(v,p); }
+    private void put(View v,int x,int y,int w,int h) { addAt(surface,v,x,y,w,h); }
+    private void addAt(FrameLayout container,View v,int x,int y,int w,int h) { FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(w,h);p.leftMargin=x;p.topMargin=y;container.addView(v,p); }
 
     /** Real 1280 x 720 coordinate space, letterboxed proportionally without a WebView. */
     private final class ScreenFit extends ViewGroup {
-        ScreenFit() { super(MainActivity.this);setBackgroundColor(Color.BLACK); }
+        ScreenFit() { super(MainActivity.this);setBackgroundColor(backgroundColor()); }
         @Override protected void onMeasure(int ws,int hs) {
             setMeasuredDimension(MeasureSpec.getSize(ws),MeasureSpec.getSize(hs));
             getChildAt(0).measure(MeasureSpec.makeMeasureSpec(1280,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(720,MeasureSpec.EXACTLY));

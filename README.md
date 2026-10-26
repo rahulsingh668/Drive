@@ -1,17 +1,17 @@
 # DRIVE Launcher
 
-A lightweight native Android home launcher with a landscape cockpit layout, clock, app shortcuts and music controls. Version 0.1.1 uses a 1280 × 720 design canvas and supports Android 6.0+ (API 23).
+A lightweight native Android home launcher with a landscape cockpit layout, clock, app shortcuts and music controls. Version 0.2.0 uses a 1280 × 720 design canvas and supports Android 6.0+ (API 23).
 
 **Known issue:** live Android Auto song information is not working yet. Metadata parser and UI fixtures pass, but live projection-app event delivery and payload compatibility remain unresolved.
 
 ## Features
 
 - Native home screen with a live clock/date and a silver SUV illustration.
-- Assignable Navigation, Music, Radio, Phone and Android Auto shortcuts and an app drawer.
+- Assignable Navigation, Music, Radio, Phone and Android Auto shortcuts, plus a full-screen app drawer with installed app icons and readable labels. Tap to launch; hold an icon for app info. The shortcut picker uses the same icon grid.
 - Saved destination searches through compatible map apps.
 - Standard Android media-session metadata and playback controls where supported.
 - Experimental CarLetter ID3 and playback-status event adapter.
-- Media-stream volume controls and saved day/night appearance.
+- Media-stream volume controls and automatic or manual Day/Night appearance.
 
 No WebView, Internet permission, analytics, advertising or third-party runtime dependency is required.
 
@@ -40,6 +40,12 @@ Test DRIVE as an ordinary app before selecting it as the default Home app. Keep 
 
 DRIVE provides the Home UI; the existing projection app continues to provide Android Auto. It yields to other activities and does not force itself into the foreground when a phone connects. Phone auto-connect, camera return, steering-wheel controls, volume and sleep/wake behavior need device-specific testing while parked.
 
+## Appearance
+
+Automatic mode is the default. It uses the stereo's local clock: a white background with dark text from **08:00 inclusive to 18:00 exclusive**, and dark Night mode outside those hours. The launcher updates on minute ticks, clock/timezone changes and resume from sleep or other apps; no location permission or background service is used.
+
+Tap the appearance button at the bottom right, or open Settings → Appearance, to select **Auto**, **Day** or **Night**. Manual Day/Night choices persist until Auto is selected again. The app drawer and dialogs use the matching palette. Make sure the stereo's date, time and timezone are correct.
+
 ## Music access
 
 Standard Android media-session discovery uses optional notification access. Android grants a broad capability, so enable it only with the device owner's consent. DRIVE uses it for media sessions and implements no notification-content processing or storage.
@@ -54,10 +60,19 @@ Build the app first, then build and run the instrumentation fixtures using the s
 python3 tests/build.py
 adb -s DEVICE install --no-incremental -t -r tests/build/drive-tests.apk
 adb -s DEVICE shell am instrument -w com.rahul.drive.tests/com.rahul.drive.tests.MediaTests
+adb -s DEVICE shell am instrument -w com.rahul.drive.tests/com.rahul.drive.tests.UiTests
 adb -s DEVICE uninstall com.rahul.drive.tests
 ```
 
-Fixtures cover title/artist/source UI, elapsed seconds, malformed JSON and nested/case-variant metadata. They invoke the adapter directly, clear their synthetic data, and do not send protected vendor broadcasts. Passing fixtures do not verify live Android Auto delivery.
+Fixtures cover title/artist/source UI, elapsed seconds, malformed JSON and nested/case-variant metadata. They invoke the adapter directly, clear their synthetic data, and do not send protected vendor broadcasts. Passing fixtures do not verify live Android Auto delivery. `UiTests` checks white/dark palettes, saved appearance choices, icon-grid rendering and shortcut assignment, then restores preferences.
+
+The schedule policy also has standalone JVM tests:
+
+```sh
+mkdir -p tests/build/unit
+javac -d tests/build/unit src/com/rahul/drive/ThemePolicy.java tests/unit/ThemePolicyTest.java
+java -cp tests/build/unit com.rahul.drive.ThemePolicyTest
+```
 
 ## Startup preview
 
