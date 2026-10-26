@@ -15,6 +15,20 @@ A lightweight native Android home launcher with a landscape cockpit layout, cloc
 
 No WebView, Internet permission, analytics, advertising or third-party runtime dependency is required.
 
+## Screenshots
+
+Captured from the native Android app at 1280 × 720 on an Android TV test device. The app drawer shows that device’s installed apps; the car stereo’s app selection will differ. The music panel shows its real access-disabled state, not simulated song information.
+
+| Day home | Night home |
+| --- | --- |
+| ![White Day home with silver Mahindra XUV300 photo and seatbelt reminder](docs/screenshots/home-day.png) | ![Dark Night home with silver Mahindra XUV300 photo](docs/screenshots/home-night.png) |
+
+| Installed app grid | Appearance options |
+| --- | --- |
+| ![Scrollable grid of installed app icons and labels](docs/screenshots/apps-day.png) | ![Automatic, Day and Night appearance choices](docs/screenshots/appearance.png) |
+
+Automatic mode uses Day from 08:00 to 18:00 in the device’s local time and Night otherwise. Manual Day or Night stays selected until Automatic is chosen again.
+
 ## Build
 
 Requirements: Python 3, JDK 17 (`java`, `javac` and `keytool` on `PATH`), Android SDK platform 34 and build-tools 34.0.0.
