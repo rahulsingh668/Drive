@@ -1,12 +1,12 @@
 # DRIVE Launcher
 
-A lightweight native Android home launcher with a landscape cockpit layout, clock, app shortcuts and music controls. Version 0.2.0 uses a 1280 × 720 design canvas and supports Android 6.0+ (API 23).
+A lightweight native Android home launcher with a landscape cockpit layout, clock, app shortcuts and music controls. Version 0.2.1 uses a 1280 × 720 design canvas and supports Android 6.0+ (API 23).
 
 **Known issue:** live Android Auto song information is not working yet. Metadata parser and UI fixtures pass, but live projection-app event delivery and payload compatibility remain unresolved.
 
 ## Features
 
-- Native home screen with a live clock/date and a silver SUV illustration.
+- Native home screen with a live clock/date and a bundled silver Mahindra XUV300 product photo (see ASSETS.md).
 - Assignable Navigation, Music, Radio, Phone and Android Auto shortcuts, plus a full-screen app drawer with installed app icons and readable labels. Tap to launch; hold an icon for app info. The shortcut picker uses the same icon grid.
 - Saved destination searches through compatible map apps.
 - Standard Android media-session metadata and playback controls where supported.

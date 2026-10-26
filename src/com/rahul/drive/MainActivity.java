@@ -206,8 +206,8 @@ public final class MainActivity extends Activity {
         surface.setBackgroundColor(backgroundColor());
         ScreenFit fit = new ScreenFit(); fit.addView(surface); setContentView(fit);
         label("DRIVE", 40, 34, 220, 40, 25, INK, true);
-        label("LAUNCHER", 189, 36, 180, 35, 13, MUTED, false);
-        status = label("Ready for your drive", 845, 34, 395, 42, 17, MUTED, false);
+        label("Drive safe and wear your seatbelt.", 189, 36, 600, 35, 17, MUTED, false);
+        status = label("Mahindra XUV 300", 845, 34, 395, 42, 17, MUTED, false);
         status.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         line(40, 98, 1200);
 
@@ -215,10 +215,12 @@ public final class MainActivity extends Activity {
         clock = label("", 34, 175, 490, 118, 106, INK, false);
         clock.setFontFeatureSettings("tnum");
         date = label("", 42, 302, 480, 30, 18, MUTED, false);
-        CarArt car = new CarArt(false);
-        put(car, 42, 352, 112, 68);
-        label("XUV 300", 170, 354, 280, 30, 21, night ? Color.rgb(198,205,211) : Color.rgb(70,86,97), true);
-        label("SILVER · YOUR CAR", 170, 388, 300, 24, 13, MUTED, false);
+        ImageView car = new ImageView(this);
+        car.setImageResource(getResources().getIdentifier("xuv300_silver", "drawable", getPackageName()));
+        car.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        car.setContentDescription("Silver Mahindra XUV 300");
+        put(car, 40, 336, 220, 104);
+        label("XUV 300", 280, 370, 230, 30, 21, night ? Color.rgb(198,205,211) : Color.rgb(70,86,97), true);
         button("Home", 40, 442, 180, 58, panelColor(), INK, () -> navigateSaved("home"));
         button("Work", 232, 442, 180, 58, panelColor(), INK, () -> navigateSaved("work"));
 
@@ -347,7 +349,7 @@ public final class MainActivity extends Activity {
         if (useCarLetterTrack()) {
             mediaTitle.setText(carLetterMedia.title);
             mediaArtist.setText(text(carLetterMedia.artist, "Phone music"));
-            mediaSource.setText("ANDROID AUTO"); status.setText("Audio · Android Auto");
+            mediaSource.setText("ANDROID AUTO"); status.setText("Mahindra XUV 300");
             artwork.setVisibility(View.INVISIBLE); emptyArtwork.setVisibility(View.VISIBLE);
             play.setText(isPlaying() ? "Ⅱ" : "▶");
             play.setContentDescription(isPlaying() ? "Pause music" : "Play music");
@@ -367,7 +369,7 @@ public final class MainActivity extends Activity {
             catch (PackageManager.NameNotFoundException ignored) { source = "MUSIC"; }
         }
         mediaSource.setText(source.toUpperCase(Locale.getDefault()));
-        status.setText(controller == null ? "Ready for your drive" : "Audio · " + source);
+        status.setText("Mahindra XUV 300");
         play.setText(isPlaying() ? "Ⅱ" : "▶"); play.setContentDescription(isPlaying() ? "Pause music" : "Play music");
         android.graphics.Bitmap art = m == null ? null : m.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART);
         if(art == null && m != null) art = m.getBitmap(MediaMetadata.METADATA_KEY_ART);
